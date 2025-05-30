@@ -20,7 +20,7 @@ import { Logger } from "../utils/logger";
  */
 export class SunoClient {
   private readonly apiKey: string;
-  private readonly baseUrl: string = "https://api.ttapi.io/suno/v1";
+  private readonly baseUrl: string = "https://api.ttapi.org/suno/v1";
 
   /**
    * @constructor
