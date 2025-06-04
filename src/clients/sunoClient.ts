@@ -13,6 +13,7 @@ import {
   SongOptions,
 } from "../interfaces/apiResponses";
 import { Logger } from "../utils/logger";
+import { MAX_DURATION } from "../config/env";
 
 /**
  * @class SunoClient
@@ -128,13 +129,18 @@ export class SunoClient {
         throw new Error(`Song not ready. Current status: ${status.status}`);
       }
 
+      let duration = await calculateDuration(status.data.musics[0].audioUrl);
+      if (MAX_DURATION && duration > MAX_DURATION) {
+        duration = MAX_DURATION;
+      }
+
       return {
         jobId: status.data.jobId,
         music: {
           musicId: status.data.musics[0].musicId,
           title: status.data.musics[0].title,
           audioUrl: status.data.musics[0].audioUrl,
-          duration: await calculateDuration(status.data.musics[0].audioUrl),
+          duration,
         },
       };
     } catch (error) {

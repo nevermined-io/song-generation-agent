@@ -9,3 +9,6 @@ export const SUNO_API_KEY = process.env.SUNO_API_KEY!;
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
 export const IS_DUMMY = process.env.IS_DUMMY === "true";
 export const DUMMY_JOB_ID = process.env.DUMMY_JOB_ID!;
+export const MAX_DURATION = process.env.MAX_DURATION
+  ? parseInt(process.env.MAX_DURATION)
+  : 0;
