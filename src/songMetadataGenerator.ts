@@ -10,6 +10,9 @@ import { JsonOutputParser } from "@langchain/core/output_parsers";
 import { Logger } from "./utils/logger";
 import { AIMessage } from "@langchain/core/messages";
 
+import { HELICONE_API_KEY } from "./config/env";
+import { generateDeterministicAgentId, generateSessionId, logSessionInfo } from "./utils/utils";
+
 /**
  * Represents the complete song metadata structure
  * @interface
@@ -78,6 +81,8 @@ function extractStringFromMessageContent(inputContent: string | any[]): string {
  * @class
  */
 export class SongMetadataGenerator {
+  private readonly agentId: string;
+  private readonly sessionId: string;
   private chain: RunnableSequence<{ idea: string }, SongMetadata>;
 
   /**
@@ -91,9 +96,24 @@ export class SongMetadataGenerator {
       throw new Error("OpenAI API key is required for SongMetadataGenerator.");
     }
 
+    // Generate deterministic agent ID and random session ID
+    this.agentId = generateDeterministicAgentId();
+    this.sessionId = generateSessionId();
+    
+    // Log session information
+    logSessionInfo(this.agentId, this.sessionId, 'SongMetadataGenerator');
+
     const llm = new ChatOpenAI({
       model: "gpt-4o-mini",
       apiKey,
+      configuration: {
+        baseURL: "https://oai.helicone.ai/v1",
+        defaultHeaders: {
+          "Helicone-Auth": `Bearer ${HELICONE_API_KEY}`,
+          "Helicone-Property-AgentId": this.agentId,
+          "Helicone-Property-SessionId": this.sessionId,
+        }
+      }
     });
 
     const promptTemplate = ChatPromptTemplate.fromTemplate(`
@@ -117,10 +137,10 @@ export class SongMetadataGenerator {
       - Song structure clarity: Use brackets [ ] to define sections such as:  
         - [Intro] [Verse 1] [Chorus] [Bridge] [Outro]  
         - Advanced instructions: [Flute solo intro] [Crescendo] [Whispering vocals] [Screaming vocals]  
-      - Emphasis through capitalization: Highlight intensity with ALL CAPS (e.g., "I CAN’T LET GO!")  
+      - Emphasis through capitalization: Highlight intensity with ALL CAPS (e.g., "I CAN'T LET GO!")  
       - Sound effects using asterisks: Incorporate atmosphere with *whispering*, *gunshots*, *echo fades*, etc.  
       - Creative genre fusion: Describe unique styles, e.g., "haunting g-funk horror doom trap r&b".  
-      - Workarounds for language filters: Replace sensitive words (e.g., “die” → “dye”, “kill” → “ill”).  
+      - Workarounds for language filters: Replace sensitive words (e.g., "die" → "dye", "kill" → "ill").  
       
       Example Output:  
       {{
