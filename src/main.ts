@@ -14,7 +14,6 @@ import {
   SUNO_API_KEY,
   OPENAI_API_KEY,
   IS_DUMMY,
-  DUMMY_JOB_ID,
 } from "./config/env";
 import { SongMetadataGenerator } from "./songMetadataGenerator";
 
@@ -168,8 +167,8 @@ async function handleBuildSongStep(
     const client = new SunoClient(SUNO_API_KEY);
     let jobId: string;
     if (IS_DUMMY) {
-      Logger.warn("Using dummy job ID for testing...");
-      jobId = DUMMY_JOB_ID;
+      Logger.warn("Using dummy song generation for testing...");
+      jobId = await client.generateSongDummy(idea, { tags, title, lyrics });
     } else {
       jobId = await client.generateSong(idea, { tags, title, lyrics });
     }

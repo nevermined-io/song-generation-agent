@@ -12,3 +12,4 @@ export const DUMMY_JOB_ID = process.env.DUMMY_JOB_ID!;
 export const MAX_DURATION = process.env.MAX_DURATION
   ? parseInt(process.env.MAX_DURATION)
   : 0;
+export const HELICONE_API_KEY = process.env.HELICONE_API_KEY!;

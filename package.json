@@ -12,6 +12,7 @@
     "test": "jest --config jest.config.ts"
   },
   "dependencies": {
+    "@helicone/helpers": "^1.1.0",
     "@langchain/core": "^0.3.19",
     "@langchain/openai": "^0.3.14",
     "@nevermined-io/payments": "^0.8.0",
