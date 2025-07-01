@@ -175,7 +175,9 @@ async function handleBuildSongStep(
 
     await client.waitForCompletion(jobId);
 
+    // const songData = await client.getSongSimple(jobId);
     const songData = await client.getSong(jobId);
+
     Logger.info(`Song generated with job id ${jobId}`);
 
     const finalOutput = [

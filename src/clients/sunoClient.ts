@@ -29,6 +29,7 @@ export class SunoClient {
   private readonly baseUrl: string = "https://api.ttapi.org/suno/v1";
   private readonly agentId: string;
   private readonly sessionId: string;
+  private requestData: Map<string, any> = new Map(); // Store original request data by jobId
 
   /**
    * @constructor
@@ -59,8 +60,9 @@ export class SunoClient {
    */
   async generateSong(prompt: string, options?: SongOptions): Promise<string> {
     try {
+      const mv = options?.mv || "chirp-v4"; // Default to chirp-v4
       const payload = {
-        mv: options?.mv || "chirp-v4", // Default to chirp-v4
+        mv: mv,
         custom: true, // Determine if it's a custom prompt
         instrumental: false, // Required field
         gpt_description_prompt: prompt,
@@ -71,48 +73,11 @@ export class SunoClient {
 
       Logger.info("Starting song generation...");
       
-      const heliconeLogger = new HeliconeManualLogger({
-        apiKey: HELICONE_API_KEY,
-        headers: {
-          "Helicone-Property-AgentId": this.agentId,
-          "Helicone-Property-SessionId": this.sessionId,
-        }
-      });
-
-      // Create a Helicone-formatted version of the request
-      const heliconePayload = {
-        model: payload.mv,
-        temperature: 1,
-        top_p: 1,
-        frequency_penalty: 0,
-        presence_penalty: 0,
-        n: 1,
-        stream: false,
-        messages: [
-          {
-            role: "user",
-            content: JSON.stringify({
-              prompt: payload.gpt_description_prompt,
-              lyrics: payload.prompt,
-              title: payload.title,
-              tags: payload.tags.split(",")
-            })
-          }
-        ]
-      };
-      
-      const response = await heliconeLogger.logRequest(
-        heliconePayload,
-        async (resultRecorder) => {
-          const r = await axios.post<GenerateSongResponse>(
-            `${this.baseUrl}/music`,
-            payload,
-            this.getRequestHeaders()
-          );
-          resultRecorder.appendResults(r.data);
-          return r;
-        }
-      ) as AxiosResponse<GenerateSongResponse>;
+      const response = await axios.post<GenerateSongResponse>(
+        `${this.baseUrl}/music`,
+        payload,
+        this.getRequestHeaders()
+      );
 
       if (response.status !== 200) {
         throw new Error("Invalid API response");
@@ -125,6 +90,8 @@ export class SunoClient {
       }
 
       Logger.success(`Job started - ID: ${data.jobId}`);
+      // Store the request data including the actual mv value used
+      this.requestData.set(data.jobId, { prompt, options, mv });
       return data.jobId;
     } catch (error) {
       const errorMessage = `Generation failed: ${
@@ -143,46 +110,19 @@ export class SunoClient {
    * @returns {Promise<string>} - Returns a fake job ID
    */
   async generateSongDummy(prompt: string, options?: SongOptions): Promise<string> {
-    const agentId = generateDeterministicAgentId();
-    const sessionId = generateSessionId();
-    logSessionInfo(agentId, sessionId, 'SunoClientDummy');
-    const heliconeLogger = new HeliconeManualLogger({
-      apiKey: HELICONE_API_KEY,
-      headers: {
-        "Helicone-Property-AgentId": agentId,
-        "Helicone-Property-SessionId": sessionId,
-      },
-    });
-    const heliconePayload = {
-      model: options?.mv || "chirp-v4",
-      temperature: 1,
-      top_p: 1,
-      frequency_penalty: 0,
-      presence_penalty: 0,
-      n: 1,
-      stream: false,
-      messages: [
-        {
-          role: "user",
-          content: JSON.stringify({
-            prompt,
-            lyrics: options?.lyrics,
-            title: options?.title || "Generated Song",
-            tags: options?.tags || ["pop"],
-          }),
-        },
-      ],
-    };
-    return await heliconeLogger.logRequest(heliconePayload, async (resultRecorder) => {
-      // Simulate a delay
-      const waitTime = Math.floor(Math.random() * 3) + 1;
-      await new Promise((resolve) => setTimeout(resolve, waitTime * 1000));
-      // Generate a fake jobId
-      const jobId = `dummy-job-${Math.floor(Math.random() * 1000000)}`;
-      resultRecorder.appendResults({ jobId });
-      Logger.info(`[Dummy] Song generation simulated. Returning jobId: ${jobId}`);
-      return jobId;
-    });
+    // Simulate a delay
+    const waitTime = Math.floor(Math.random() * 3) + 1;
+    await new Promise((resolve) => setTimeout(resolve, waitTime * 1000));
+    
+    // Generate a fake jobId
+    const jobId = `dummy-job-${Math.floor(Math.random() * 1000000)}`;
+    
+    // Store the request data including the actual mv value that would have been used
+    const mv = options?.mv || "chirp-v4";
+    this.requestData.set(jobId, { prompt, options, mv });
+    
+    Logger.info(`[Dummy] Song generation simulated. Returning jobId: ${jobId}`);
+    return jobId;
   }
 
   /**
@@ -217,13 +157,13 @@ export class SunoClient {
 
   /**
    * @async
-   * @function getSong
-   * @description Retrieves the completed song data once the job has succeeded
+   * @function getSongSimple
+   * @description Retrieves the completed song data without Helicone logging
    * @param {string} jobId - The job ID to retrieve
    * @returns {Promise<SongResponse>} - The structured song data
    * @throws {Error} - Throws an error if the song is not ready or retrieval fails
    */
-  async getSong(jobId: string): Promise<SongResponse> {
+  async getSongSimple(jobId: string): Promise<SongResponse> {
     if (IS_DUMMY && jobId.startsWith('dummy-job-')) {
       // Return a plausible dummy SongResponse
       return {
@@ -232,7 +172,7 @@ export class SunoClient {
           musicId: `music-${jobId}`,
           title: "Dummy Song Title",
           audioUrl: "https://download.samplelib.com/wav/sample-15s.wav",
-          duration: 120,
+          duration: 15,
         },
       };
     }
@@ -263,6 +203,141 @@ export class SunoClient {
       Logger.error(errorMessage);
       throw new Error(errorMessage);
     }
+  }
+
+  /**
+   * @async
+   * @function getSong
+   * @description Retrieves the completed song data once the job has succeeded
+   * @param {string} jobId - The job ID to retrieve
+   * @returns {Promise<SongResponse>} - The structured song data
+   * @throws {Error} - Throws an error if the song is not ready or retrieval fails
+   */
+  async getSong(jobId: string): Promise<SongResponse> {
+    const storedRequestData = this.requestData.get(jobId) || { 
+      prompt: "Unknown", 
+      options: {}, 
+      mv: "chirp-v4", // Default fallback
+      note: "Request data not available - jobId may have been generated by another client instance" 
+    };
+
+    const heliconeLogger = new HeliconeManualLogger({
+      apiKey: HELICONE_API_KEY,
+      headers: {
+        "Helicone-Property-AgentId": this.agentId,
+        "Helicone-Property-SessionId": this.sessionId,
+      }
+    });
+
+    // Create a Helicone-formatted version of the request
+    const heliconePayload = {
+      model: `ttapi/suno/${storedRequestData.mv}`, // Use the stored mv value
+      temperature: 1,
+      top_p: 1,
+      frequency_penalty: 0,
+      presence_penalty: 0,
+      n: 1,
+      stream: false,
+      messages: [
+        {
+          role: "user",
+          content: JSON.stringify({
+            jobId: jobId,
+            operation: "fetch_song",
+            requestData: storedRequestData
+          })
+        }
+      ]
+    };
+
+    return await heliconeLogger.logRequest(
+      heliconePayload,
+      async (resultRecorder) => {
+        let songResponse: SongResponse;
+        let totalTokens: number;
+
+        if (IS_DUMMY && jobId.startsWith('dummy-job-')) {
+          // Handle dummy case
+          songResponse = {
+            jobId,
+            music: {
+              musicId: `music-${jobId}`,
+              title: "Dummy Song Title",
+              audioUrl: "https://download.samplelib.com/wav/sample-15s.wav",
+              duration: 15,
+            },
+          };
+          totalTokens = 6; // Default for dummy case
+        } else {
+          // Handle real case
+          const status = await this.checkStatus(jobId);
+
+          if (status.status !== "SUCCESS") {
+            throw new Error(`Song not ready. Current status: ${status.status}`);
+          }
+
+          let duration = await calculateDuration(status.data.musics[0].audioUrl);
+          if (MAX_DURATION && duration > MAX_DURATION) {
+            duration = MAX_DURATION;
+          }
+
+          songResponse = {
+            jobId: status.data.jobId,
+            music: {
+              musicId: status.data.musics[0].musicId,
+              title: status.data.musics[0].title,
+              audioUrl: status.data.musics[0].audioUrl,
+              duration,
+            },
+          };
+          // https://ttapi.io/docs/apiReference/suno
+          totalTokens = parseInt(status.data.quota || "0");
+        }
+
+        console.log("storedRequestData", storedRequestData);
+
+        // Create a Helicone response object that mimics LLM response structure
+        const heliconeResponse = {
+          id: `song-${jobId}`,
+          object: "chat.completion",
+          created: Math.floor(Date.now() / 1000),
+          model: `ttapi/suno/${storedRequestData.mv}`, // Use the stored mv value
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: JSON.stringify(songResponse),
+                refusal: null,
+                annotations: []
+              },
+              logprobs: null,
+              finish_reason: "stop"
+            }
+          ],
+          usage: {
+            prompt_tokens: 0,
+            completion_tokens: totalTokens,
+            total_tokens: totalTokens,
+            prompt_tokens_details: {
+              cached_tokens: 0,
+              audio_tokens: 0
+            },
+            completion_tokens_details: {
+              reasoning_tokens: 0,
+              audio_tokens: 0,
+              accepted_prediction_tokens: 0,
+              rejected_prediction_tokens: 0
+            }
+          },
+          service_tier: "default",
+          system_fingerprint: `fp_${jobId}`
+        };
+
+        resultRecorder.appendResults(heliconeResponse);
+        return songResponse;
+      }
+    );
   }
 
   /**
