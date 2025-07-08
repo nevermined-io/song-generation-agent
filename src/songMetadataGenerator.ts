@@ -10,8 +10,8 @@ import { JsonOutputParser } from "@langchain/core/output_parsers";
 import { Logger } from "./utils/logger";
 import { AIMessage } from "@langchain/core/messages";
 
-import { HELICONE_API_KEY } from "./config/env";
 import { generateDeterministicAgentId, generateSessionId, logSessionInfo } from "./utils/utils";
+import { withHeliconeLangchain } from "./utils/heliconeWrapper";
 
 /**
  * Represents the complete song metadata structure
@@ -103,18 +103,7 @@ export class SongMetadataGenerator {
     // Log session information
     logSessionInfo(this.agentId, this.sessionId, 'SongMetadataGenerator');
 
-    const llm = new ChatOpenAI({
-      model: "gpt-4o-mini",
-      apiKey,
-      configuration: {
-        baseURL: "https://oai.helicone.ai/v1",
-        defaultHeaders: {
-          "Helicone-Auth": `Bearer ${HELICONE_API_KEY}`,
-          "Helicone-Property-AgentId": this.agentId,
-          "Helicone-Property-SessionId": this.sessionId,
-        }
-      }
-    });
+    const llm = new ChatOpenAI(withHeliconeLangchain("gpt-4o-mini", apiKey, this.agentId, this.sessionId));
 
     const promptTemplate = ChatPromptTemplate.fromTemplate(`
 
