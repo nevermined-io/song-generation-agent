@@ -13,3 +13,5 @@ export const MAX_DURATION = process.env.MAX_DURATION
   ? parseInt(process.env.MAX_DURATION)
   : 0;
 export const HELICONE_API_KEY = process.env.HELICONE_API_KEY!;
+export const HELICONE_BASE_LOGGING_URL = process.env.HELICONE_BASE_LOGGING_URL!;
+export const HELICONE_MANUAL_LOGGING_URL = process.env.HELICONE_MANUAL_LOGGING_URL!;
