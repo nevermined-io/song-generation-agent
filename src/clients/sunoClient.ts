@@ -14,6 +14,10 @@ import {
 } from "../interfaces/apiResponses";
 import { Logger } from "../utils/logger";
 import { MAX_DURATION } from "../config/env";
+import { IS_DUMMY } from "../config/env";
+
+import { withHeliconeLogging, calculateSongUsage, calculateDummySongUsage } from "../utils/heliconeWrapper";
+import { generateDeterministicAgentId, generateSessionId, logSessionInfo } from "../utils/utils";
 
 /**
  * @class SunoClient
@@ -22,6 +26,9 @@ import { MAX_DURATION } from "../config/env";
 export class SunoClient {
   private readonly apiKey: string;
   private readonly baseUrl: string = "https://api.ttapi.org/suno/v1";
+  private readonly agentId: string;
+  private readonly sessionId: string;
+  private requestData: Map<string, any> = new Map(); // Store original request data by jobId
 
   /**
    * @constructor
@@ -32,6 +39,13 @@ export class SunoClient {
       throw new Error("API key is required");
     }
     this.apiKey = apiKey;
+    
+    // Generate deterministic agent ID and random session ID
+    this.agentId = generateDeterministicAgentId();
+    this.sessionId = generateSessionId();
+    
+    // Log session information
+    logSessionInfo(this.agentId, this.sessionId, 'SunoClient');
   }
 
   /**
@@ -45,8 +59,9 @@ export class SunoClient {
    */
   async generateSong(prompt: string, options?: SongOptions): Promise<string> {
     try {
+      const mv = options?.mv || "chirp-v4"; // Default to chirp-v4
       const payload = {
-        mv: options?.mv || "chirp-v4", // Default to chirp-v4
+        mv: mv,
         custom: true, // Determine if it's a custom prompt
         instrumental: false, // Required field
         gpt_description_prompt: prompt,
@@ -56,8 +71,9 @@ export class SunoClient {
       };
 
       Logger.info("Starting song generation...");
-      const response: AxiosResponse<GenerateSongResponse> = await axios.post(
-        `${this.baseUrl}/music`, // Correct endpoint
+      
+      const response = await axios.post<GenerateSongResponse>(
+        `${this.baseUrl}/music`,
         payload,
         this.getRequestHeaders()
       );
@@ -73,6 +89,8 @@ export class SunoClient {
       }
 
       Logger.success(`Job started - ID: ${data.jobId}`);
+      // Store the request data including the actual mv value used
+      this.requestData.set(data.jobId, { prompt, options, mv });
       return data.jobId;
     } catch (error) {
       const errorMessage = `Generation failed: ${
@@ -81,6 +99,29 @@ export class SunoClient {
       Logger.error(errorMessage);
       throw new Error(errorMessage);
     }
+  }
+
+  /**
+   * @function generateSongDummy
+   * @description Dummy implementation for song generation. Returns a fake jobId after a delay and logs a Helicone request for testing.
+   * @param {string} prompt - The prompt or idea for the music
+   * @param {SongOptions} [options] - Additional configuration options
+   * @returns {Promise<string>} - Returns a fake job ID
+   */
+  async generateSongDummy(prompt: string, options?: SongOptions): Promise<string> {
+    // Simulate a delay
+    const waitTime = Math.floor(Math.random() * 3) + 1;
+    await new Promise((resolve) => setTimeout(resolve, waitTime * 1000));
+    
+    // Generate a fake jobId
+    const jobId = `dummy-job-${Math.floor(Math.random() * 1000000)}`;
+    
+    // Store the request data including the actual mv value that would have been used
+    const mv = options?.mv || "chirp-v4";
+    this.requestData.set(jobId, { prompt, options, mv });
+    
+    Logger.info(`[Dummy] Song generation simulated. Returning jobId: ${jobId}`);
+    return jobId;
   }
 
   /**
@@ -115,13 +156,26 @@ export class SunoClient {
 
   /**
    * @async
-   * @function getSong
-   * @description Retrieves the completed song data once the job has succeeded
+   * @function getSongSimple
+   * @description Retrieves the completed song data without Helicone logging
    * @param {string} jobId - The job ID to retrieve
    * @returns {Promise<SongResponse>} - The structured song data
    * @throws {Error} - Throws an error if the song is not ready or retrieval fails
    */
-  async getSong(jobId: string): Promise<SongResponse> {
+  async getSongSimple(jobId: string): Promise<SongResponse> {
+    if (IS_DUMMY && jobId.startsWith('dummy-job-')) {
+      // Return a plausible dummy SongResponse
+      return {
+        jobId,
+        music: {
+          musicId: `music-${jobId}`,
+          title: "Dummy Song Title",
+          audioUrl: "https://download.samplelib.com/wav/sample-15s.wav",
+          duration: 15,
+        },
+      };
+    }
+
     try {
       const status = await this.checkStatus(jobId);
 
@@ -151,6 +205,97 @@ export class SunoClient {
   }
 
   /**
+   * Core song retrieval logic without Helicone logging
+   */
+  private async executeSongRetrieval(jobId: string): Promise<{ songResponse: SongResponse; quota: number }> {
+    if (IS_DUMMY && jobId.startsWith('dummy-job-')) {
+      // Handle dummy case
+      return {
+        songResponse: {
+          jobId,
+          music: {
+            musicId: `music-${jobId}`,
+            title: "Dummy Song Title",
+            audioUrl: "https://download.samplelib.com/wav/sample-15s.wav",
+            duration: 15,
+          },
+        },
+        quota: 6 // Default for dummy case
+      };
+    } else {
+      // Handle real case
+      const status = await this.checkStatus(jobId);
+
+      if (status.status !== "SUCCESS") {
+        throw new Error(`Song not ready. Current status: ${status.status}`);
+      }
+
+      let duration = await calculateDuration(status.data.musics[0].audioUrl);
+      if (MAX_DURATION && duration > MAX_DURATION) {
+        duration = MAX_DURATION;
+      }
+
+      const songResponse = {
+        jobId: status.data.jobId,
+        music: {
+          musicId: status.data.musics[0].musicId,
+          title: status.data.musics[0].title,
+          audioUrl: status.data.musics[0].audioUrl,
+          duration,
+        },
+      };
+
+      // https://ttapi.io/docs/apiReference/suno
+      const quota = parseInt(status.data.quota || "0");
+
+      return { songResponse, quota };
+    }
+  }
+
+  /**
+   * @async
+   * @function getSong
+   * @description Retrieves the completed song data once the job has succeeded
+   * @param {string} jobId - The job ID to retrieve
+   * @returns {Promise<SongResponse>} - The structured song data
+   * @throws {Error} - Throws an error if the song is not ready or retrieval fails
+   */
+  async getSong(jobId: string): Promise<SongResponse> {
+    const storedRequestData = this.requestData.get(jobId) || { 
+      prompt: "Unknown", 
+      options: {}, 
+      mv: "chirp-v4", // Default fallback
+      note: "Request data not available - jobId may have been generated by another client instance" 
+    };
+
+    return withHeliconeLogging(
+      'SunoClient',
+      {
+        model: `ttapi/suno/${storedRequestData.mv}`, // Use the stored mv value
+        inputData: {
+          jobId: jobId,
+          operation: "fetch_song",
+          requestData: storedRequestData
+        }
+      },
+      () => this.executeSongRetrieval(jobId),
+      (internalResult) => {
+        return internalResult.songResponse;
+      },
+      (internalResult) => {
+        if (IS_DUMMY && jobId.startsWith('dummy-job-')) {
+          return calculateDummySongUsage();
+        } else {
+          return calculateSongUsage(internalResult.quota);
+        }
+      },
+      'song',
+      this.agentId,
+      this.sessionId
+    );
+  }
+
+  /**
    * @async
    * @function waitForCompletion
    * @description Polls the job status until completion or failure
@@ -162,6 +307,11 @@ export class SunoClient {
     jobId: string,
     interval: number = 5000
   ): Promise<void> {
+    if (IS_DUMMY && jobId.startsWith('dummy-job-')) {
+      Logger.info(`[Dummy] waitForCompletion: instantly resolving for jobId ${jobId}`);
+      return;
+    }
+
     return new Promise(async (resolve, reject) => {
       const poll = async () => {
         try {
